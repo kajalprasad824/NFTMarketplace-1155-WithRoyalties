@@ -9,6 +9,8 @@ contract SwargNFT is ERC1155, Ownable, ERC2981 {
 
     string public name;
     string public symbol;
+
+    event Mint(uint _id,uint _amount);
     mapping(uint256 => string) private _tokenURIs;
 
     constructor(
@@ -33,6 +35,7 @@ contract SwargNFT is ERC1155, Ownable, ERC2981 {
     ) public onlyOwner {
         _mint(_to, _id, _amount, " ");
         _setTokenURI(_id, _uri);
+        emit Mint(_id, _amount);
     }
 
     function _setTokenURI(uint256 _id, string calldata _uri) internal {
