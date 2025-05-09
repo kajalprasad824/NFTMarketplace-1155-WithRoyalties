@@ -2,11 +2,10 @@
 pragma solidity ^0.8.20;
 
 import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
-import {ERC1155Burnable} from "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155Burnable.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/common/ERC2981.sol";
 
-contract CollectionNFT1155 is ERC1155, Ownable, ERC1155Burnable, ERC2981 {
+contract CollectionNFT1155 is ERC1155, Ownable, ERC2981 {
     uint256 private _nextTokenId;
     string public name;
     string public symbol;
@@ -32,17 +31,15 @@ contract CollectionNFT1155 is ERC1155, Ownable, ERC1155Burnable, ERC2981 {
     function mint(
         address account,
         uint256 amount,
-        string calldata _uri
+        string calldata _uri,
+        address _royaltyReceiver,
+        uint96 _feeNumerator
     ) public onlyOwner {
         uint256 tokenId = _nextTokenId++;
         _mint(account, tokenId, amount, " ");
         _setTokenURI(tokenId, _uri);
+        _setTokenRoyalty(tokenId, _royaltyReceiver, _feeNumerator);
         emit Mint(tokenId, amount);
-    }
-
-    //Set token specific royalty
-    function setTokenRoyalty(uint _id,address _receiver,uint96 _feeNumerator) public onlyOwner{
-        _setTokenRoyalty(_id, _receiver, _feeNumerator);
     }
 
     function _setTokenURI(uint256 _id, string calldata _uri) internal {
