@@ -13,13 +13,10 @@ contract CollectionNFT721 is ERC721, ERC721URIStorage, Ownable, ERC2981 {
 
     constructor(
         address initialOwner,
-        address _royaltyReceiver,
-        uint96 _royaltyFeeNumerator,
         string memory _name,
         string memory _symbol
     ) ERC721(_name, _symbol) Ownable(initialOwner) {
-        // Set default royalty
-        _setDefaultRoyalty(_royaltyReceiver, _royaltyFeeNumerator);
+    
     }
 
     function safeMint(

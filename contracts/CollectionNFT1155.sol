@@ -16,27 +16,23 @@ contract CollectionNFT1155 is ERC1155, Ownable, ERC2981 {
     constructor(
         address initialOwner,
         string memory _name,
-        string memory _symbol,
-        address _royaltyReceiver,
-        uint96 _royaltyFeeNumerator
+        string memory _symbol
         
     ) ERC1155("") Ownable(initialOwner) {
         name = _name;
         symbol = _symbol;
 
-        // Set default royalty
-        _setDefaultRoyalty(_royaltyReceiver, _royaltyFeeNumerator);
     }
 
     function mint(
-        address account,
+        address to,
         uint256 amount,
         string calldata _uri,
         address _royaltyReceiver,
         uint96 _feeNumerator
     ) public onlyOwner {
         uint256 tokenId = _nextTokenId++;
-        _mint(account, tokenId, amount, " ");
+        _mint(to, tokenId, amount, " ");
         _setTokenURI(tokenId, _uri);
         _setTokenRoyalty(tokenId, _royaltyReceiver, _feeNumerator);
         emit Mint(tokenId, amount);

@@ -17,15 +17,11 @@ contract NFTCollectionFactory {
     function deployCollection(
         NFTType nftType,
         string calldata _name,
-        string calldata _symbol,
-        address _royaltyReceiver,
-        uint96 _royaltyFeeNumerator
+        string calldata _symbol
     ) external returns (address collectionAddress) {
         if (nftType == NFTType.ERC721) {
             CollectionNFT721 newERC721 = new CollectionNFT721(
                 msg.sender,
-                _royaltyReceiver,
-                _royaltyFeeNumerator,
                 _name,
                 _symbol
             );
@@ -34,9 +30,7 @@ contract NFTCollectionFactory {
             CollectionNFT1155 newERC1155 = new CollectionNFT1155(
                 msg.sender,
                 _name,
-                _symbol,
-                _royaltyReceiver,
-                _royaltyFeeNumerator
+                _symbol
                 
             );
             collectionAddress = address(newERC1155);
