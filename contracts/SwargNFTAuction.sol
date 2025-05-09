@@ -86,14 +86,13 @@ contract SwargNFTAuction is
 
     /// @notice Parameters of an auction
     struct Auction {
-        address owner;
         uint256 quantity;
         uint256 reservePrice;
         uint256 startTime;
         uint256 endTime;
     }
     /// @notice NFT Address -> Token ID -> Auction Parameters
-    mapping(address => mapping(uint256 => Auction)) public auctions;
+    mapping(address => mapping(uint256 => mapping (address => Auction))) public auctions;
 
     struct BidderInfo {
         uint256 highBid;
@@ -116,14 +115,24 @@ contract SwargNFTAuction is
     bytes4 private constant INTERFACE_ID_ERC1155 = 0xd9b67a26;
     bytes4 private constant _INTERFACE_ID_ERC2981 = 0x2a55205a;
 
-    modifier onlyValidAuction(address nftAddress, uint256 tokenId) {
-        Auction memory auction = auctions[nftAddress][tokenId];
+    modifier onlyValidAuction(address nftAddress, uint256 tokenId,address _owner) {
+        Auction memory auction = auctions[nftAddress][tokenId][_owner];
 
         require(auction.endTime != 0, "No such auction exists");
-        require(msg.sender == auction.owner, "Only seller can cancel");
         require(
             block.timestamp < auction.startTime,
-            "Cannot cancel after auction has started"
+            "Cannot change anything after auction has started"
+        );
+        _;
+    }
+
+    modifier onlyValidOwner(address nftAddress, uint256 tokenId,address _owner) {
+        Auction memory auction = auctions[nftAddress][tokenId][_owner];
+
+        require(auction.endTime != 0, "No such auction exists");
+        require(
+            block.timestamp >= auction.endTime,
+            "Only call after the auction end time"
         );
         _;
     }
@@ -188,7 +197,7 @@ contract SwargNFTAuction is
 
         // Ensure a token cannot be re-listed if already on auction
         require(
-            auctions[_nftAddress][_tokenId].owner == address(0),
+            auctions[_nftAddress][_tokenId][msg.sender].endTime == 0,
             "auction already exist"
         );
 
@@ -204,8 +213,7 @@ contract SwargNFTAuction is
         );
 
         // Setup the auction
-        auctions[_nftAddress][_tokenId] = Auction({
-            owner: _msgSender(),
+        auctions[_nftAddress][_tokenId][msg.sender] = Auction({
             quantity: _quantity,
             reservePrice: _reservePrice,
             startTime: _startTimestamp,
@@ -217,11 +225,14 @@ contract SwargNFTAuction is
 
     function placeBid(
         address _nftAddress,
+        address _owner,
         uint256 _tokenId,
         uint256 _bidAmount
     ) public nonReentrant {
-        Auction storage auction = auctions[_nftAddress][_tokenId];
+        Auction storage auction = auctions[_nftAddress][_tokenId][_owner];
         BidderInfo storage biddingInfo = bidderInfo[_nftAddress][_tokenId];
+
+        require(auction.endTime != 0, "No such auction exists");
 
         // Ensure auction is in flight
         require(
@@ -274,13 +285,18 @@ contract SwargNFTAuction is
 
     function resultAuction(address _nftAddress, uint256 _tokenId)
         public
-        nonReentrant
+        nonReentrant onlyValidOwner(_nftAddress, _tokenId, msg.sender)
     {
-        Auction memory auction = auctions[_nftAddress][_tokenId];
+        Auction memory auction = auctions[_nftAddress][_tokenId][msg.sender];
         BidderInfo memory bid = bidderInfo[_nftAddress][_tokenId];
+  
+        require(
+            block.timestamp >= auction.endTime,
+            "Only call after the auction end"
+        );
 
         // Delete storage early to prevent reentrancy
-        delete auctions[_nftAddress][_tokenId];
+        delete auctions[_nftAddress][_tokenId][msg.sender];
         delete bidderInfo[_nftAddress][_tokenId];
 
         // === Case 1: No valid bid ===
@@ -289,7 +305,7 @@ contract SwargNFTAuction is
             if (IERC165(_nftAddress).supportsInterface(INTERFACE_ID_ERC721)) {
                 IERC721(_nftAddress).safeTransferFrom(
                     address(this),
-                    auction.owner,
+                    msg.sender,
                     _tokenId
                 );
             } else if (
@@ -297,7 +313,7 @@ contract SwargNFTAuction is
             ) {
                 IERC1155(_nftAddress).safeTransferFrom(
                     address(this),
-                    auction.owner,
+                    msg.sender,
                     _tokenId,
                     auction.quantity,
                     ""
@@ -332,7 +348,7 @@ contract SwargNFTAuction is
             platformFeeReceipient,
             platformAmount
         ); // Platform fee to platform
-        USDT.safeTransferFrom(address(this), auction.owner, sellerAmount); // Seller receives the rest
+        USDT.safeTransferFrom(address(this), msg.sender, sellerAmount); // Seller receives the rest
 
         // Transfer NFT to winning bidder
         if (IERC165(_nftAddress).supportsInterface(INTERFACE_ID_ERC721)) {
@@ -377,9 +393,9 @@ contract SwargNFTAuction is
 
     function cancelAuction(address _nftAddress, uint256 _tokenId)
         public
-        onlyValidAuction(_nftAddress, _tokenId)
+        onlyValidAuction(_nftAddress, _tokenId,msg.sender)
     {
-        Auction memory auction = auctions[_nftAddress][_tokenId];
+        Auction memory auction = auctions[_nftAddress][_tokenId][msg.sender];
 
         if (IERC165(_nftAddress).supportsInterface(INTERFACE_ID_ERC721)) {
             IERC721 nft = IERC721(_nftAddress);
@@ -401,7 +417,7 @@ contract SwargNFTAuction is
         }
 
         // Optional: cleanup any bids (though there should be none)
-        delete auctions[_nftAddress][_tokenId];
+        delete auctions[_nftAddress][_tokenId][msg.sender];
 
         emit AuctionCancelled(_nftAddress, _tokenId, msg.sender);
     }
@@ -418,8 +434,8 @@ contract SwargNFTAuction is
         address _nftAddress,
         uint256 _tokenId,
         uint256 _endTimestamp
-    ) public onlyValidAuction(_nftAddress, _tokenId) {
-        Auction storage auction = auctions[_nftAddress][_tokenId];
+    ) public onlyValidAuction(_nftAddress, _tokenId,msg.sender) {
+        Auction storage auction = auctions[_nftAddress][_tokenId][msg.sender];
         require(
             auction.startTime < _endTimestamp,
             "end time must be greater than start"
@@ -441,8 +457,8 @@ contract SwargNFTAuction is
         address _nftAddress,
         uint256 _tokenId,
         uint256 _startTime
-    ) public onlyValidAuction(_nftAddress, _tokenId) {
-        Auction storage auction = auctions[_nftAddress][_tokenId];
+    ) public onlyValidAuction(_nftAddress, _tokenId,msg.sender) {
+        Auction storage auction = auctions[_nftAddress][_tokenId][msg.sender];
 
         require(
             _startTime < auction.endTime,
@@ -464,8 +480,8 @@ contract SwargNFTAuction is
         address _nftAddress,
         uint256 _tokenId,
         uint256 _reservePrice
-    ) public onlyValidAuction(_nftAddress, _tokenId) {
-        Auction storage auction = auctions[_nftAddress][_tokenId];
+    ) public onlyValidAuction(_nftAddress, _tokenId,msg.sender) {
+        Auction storage auction = auctions[_nftAddress][_tokenId][msg.sender];
         auction.reservePrice = _reservePrice;
         emit UpdateAuctionReservePrice(_nftAddress, _tokenId, _reservePrice);
     }
@@ -511,3 +527,5 @@ contract SwargNFTAuction is
         emit UpdateMinBidIncrementPercent(minBidIncrementPercent);
     }
 }
+
+//000000000000000000
