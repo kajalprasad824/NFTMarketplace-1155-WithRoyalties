@@ -90,16 +90,12 @@ contract SwargNFTAuction is
         uint256 reservePrice;
         uint256 startTime;
         uint256 endTime;
-    }
-    /// @notice NFT Address -> Token ID -> Auction Parameters
-    mapping(address => mapping(uint256 => mapping (address => Auction))) public auctions;
-
-    struct BidderInfo {
         uint256 highBid;
         address bidderAddress;
     }
-    /// @notice NFT Address -> Token ID -> Bidding Info
-    mapping(address => mapping(uint256 => BidderInfo)) public bidderInfo;
+    /// @notice NFT Address -> Token ID -> Auction Parameters
+    mapping(address => mapping(uint256 => mapping(address => Auction)))
+        public auctions;
 
     IERC20 USDT;
 
@@ -115,7 +111,11 @@ contract SwargNFTAuction is
     bytes4 private constant INTERFACE_ID_ERC1155 = 0xd9b67a26;
     bytes4 private constant _INTERFACE_ID_ERC2981 = 0x2a55205a;
 
-    modifier onlyValidAuction(address nftAddress, uint256 tokenId,address _owner) {
+    modifier onlyValidAuction(
+        address nftAddress,
+        uint256 tokenId,
+        address _owner
+    ) {
         Auction memory auction = auctions[nftAddress][tokenId][_owner];
 
         require(auction.endTime != 0, "No such auction exists");
@@ -126,7 +126,11 @@ contract SwargNFTAuction is
         _;
     }
 
-    modifier onlyValidOwner(address nftAddress, uint256 tokenId,address _owner) {
+    modifier onlyValidOwner(
+        address nftAddress,
+        uint256 tokenId,
+        address _owner
+    ) {
         Auction memory auction = auctions[nftAddress][tokenId][_owner];
 
         require(auction.endTime != 0, "No such auction exists");
@@ -217,7 +221,9 @@ contract SwargNFTAuction is
             quantity: _quantity,
             reservePrice: _reservePrice,
             startTime: _startTimestamp,
-            endTime: _endTimestamp
+            endTime: _endTimestamp,
+            highBid: 0,
+            bidderAddress: address(0)
         });
 
         emit AuctionCreated(_nftAddress, _tokenId, _quantity);
@@ -230,7 +236,6 @@ contract SwargNFTAuction is
         uint256 _bidAmount
     ) public nonReentrant {
         Auction storage auction = auctions[_nftAddress][_tokenId][_owner];
-        BidderInfo storage biddingInfo = bidderInfo[_nftAddress][_tokenId];
 
         require(auction.endTime != 0, "No such auction exists");
 
@@ -242,54 +247,56 @@ contract SwargNFTAuction is
         );
 
         require(
-            biddingInfo.bidderAddress != msg.sender,
+            auction.bidderAddress != msg.sender,
             "You are already the higher bidder"
         );
 
         require(
-            isValidBid(_nftAddress, _tokenId, _bidAmount, auction.reservePrice),
+            isValidBid(
+                _nftAddress,
+                _tokenId,
+                _bidAmount,
+                auction.reservePrice,
+                _owner
+            ),
             "Bid too low"
         );
 
-        if (biddingInfo.bidderAddress != address(0)) {
-            USDT.safeTransferFrom(
-                address(this),
-                biddingInfo.bidderAddress,
-                biddingInfo.highBid
-            );
+        if (auction.bidderAddress != address(0)) {
+            USDT.transfer(auction.bidderAddress, auction.highBid);
         }
 
         emit BidRefunded(
             _nftAddress,
             _tokenId,
-            biddingInfo.bidderAddress,
-            biddingInfo.highBid
+            auction.bidderAddress,
+            auction.highBid
         );
 
-        biddingInfo.bidderAddress = msg.sender;
-        biddingInfo.highBid = _bidAmount;
+        auction.bidderAddress = msg.sender;
+        auction.highBid = _bidAmount;
 
         USDT.safeTransferFrom(
-            biddingInfo.bidderAddress,
+            auction.bidderAddress,
             address(this),
-            biddingInfo.highBid
+            auction.highBid
         );
 
         emit BidPlaced(
             _nftAddress,
             _tokenId,
-            biddingInfo.bidderAddress,
-            biddingInfo.highBid
+            auction.bidderAddress,
+            auction.highBid
         );
     }
 
     function resultAuction(address _nftAddress, uint256 _tokenId)
         public
-        nonReentrant onlyValidOwner(_nftAddress, _tokenId, msg.sender)
+        nonReentrant
+        onlyValidOwner(_nftAddress, _tokenId, msg.sender)
     {
         Auction memory auction = auctions[_nftAddress][_tokenId][msg.sender];
-        BidderInfo memory bid = bidderInfo[_nftAddress][_tokenId];
-  
+
         require(
             block.timestamp >= auction.endTime,
             "Only call after the auction end"
@@ -297,10 +304,9 @@ contract SwargNFTAuction is
 
         // Delete storage early to prevent reentrancy
         delete auctions[_nftAddress][_tokenId][msg.sender];
-        delete bidderInfo[_nftAddress][_tokenId];
 
         // === Case 1: No valid bid ===
-        if (bid.bidderAddress == address(0)) {
+        if (auction.bidderAddress == address(0)) {
             // Return NFT back to seller
             if (IERC165(_nftAddress).supportsInterface(INTERFACE_ID_ERC721)) {
                 IERC721(_nftAddress).safeTransferFrom(
@@ -334,27 +340,23 @@ contract SwargNFTAuction is
 
         // === Case 2: Valid bid exists ===
         (address royaltyReceiver, uint256 royaltyAmount) = royalty(_nftAddress)
-            .royaltyInfo(_tokenId, bid.highBid);
+            .royaltyInfo(_tokenId, auction.highBid);
 
-        uint256 platformAmount = (bid.highBid * platformFee) / 10000;
+        uint256 platformAmount = (auction.highBid * platformFee) / 10000;
 
         // Calculate the seller's share
-        uint256 sellerAmount = bid.highBid - royaltyAmount - platformFee;
+        uint256 sellerAmount = auction.highBid - royaltyAmount - platformAmount;
 
         // Transfer USDT to respective parties
-        USDT.safeTransferFrom(address(this), royaltyReceiver, royaltyAmount); // Royalty to creator
-        USDT.safeTransferFrom(
-            address(this),
-            platformFeeReceipient,
-            platformAmount
-        ); // Platform fee to platform
-        USDT.safeTransferFrom(address(this), msg.sender, sellerAmount); // Seller receives the rest
+        USDT.transfer(royaltyReceiver, royaltyAmount); // Royalty to creator
+        USDT.transfer(platformFeeReceipient, platformAmount); // Platform fee to platform
+        USDT.transfer(msg.sender, sellerAmount); // Seller receives the rest
 
         // Transfer NFT to winning bidder
         if (IERC165(_nftAddress).supportsInterface(INTERFACE_ID_ERC721)) {
             IERC721(_nftAddress).safeTransferFrom(
                 address(this),
-                bid.bidderAddress,
+                auction.bidderAddress,
                 _tokenId
             );
         } else if (
@@ -362,23 +364,30 @@ contract SwargNFTAuction is
         ) {
             IERC1155(_nftAddress).safeTransferFrom(
                 address(this),
-                bid.bidderAddress,
+                auction.bidderAddress,
                 _tokenId,
                 auction.quantity,
                 ""
             );
         }
 
-        emit AuctionResulted(_nftAddress, _tokenId, auction.quantity, bid.bidderAddress, bid.highBid);
+        emit AuctionResulted(
+            _nftAddress,
+            _tokenId,
+            auction.quantity,
+            auction.bidderAddress,
+            auction.highBid
+        );
     }
 
     function isValidBid(
         address nftAddress,
         uint256 tokenId,
         uint256 newBidAmount,
-        uint256 _reservePrice
+        uint256 _reservePrice,
+        address _owner
     ) public view returns (bool) {
-        uint256 currentBid = bidderInfo[nftAddress][tokenId].highBid;
+        uint256 currentBid = auctions[nftAddress][tokenId][_owner].highBid;
 
         if (currentBid == 0) {
             // First bid: must be at least the reserve price
@@ -393,7 +402,7 @@ contract SwargNFTAuction is
 
     function cancelAuction(address _nftAddress, uint256 _tokenId)
         public
-        onlyValidAuction(_nftAddress, _tokenId,msg.sender)
+        onlyValidAuction(_nftAddress, _tokenId, msg.sender)
     {
         Auction memory auction = auctions[_nftAddress][_tokenId][msg.sender];
 
@@ -406,8 +415,8 @@ contract SwargNFTAuction is
             IERC1155 nft = IERC1155(_nftAddress);
 
             nft.safeTransferFrom(
-                msg.sender,
                 address(this),
+                msg.sender,
                 _tokenId,
                 auction.quantity,
                 " "
@@ -434,7 +443,7 @@ contract SwargNFTAuction is
         address _nftAddress,
         uint256 _tokenId,
         uint256 _endTimestamp
-    ) public onlyValidAuction(_nftAddress, _tokenId,msg.sender) {
+    ) public onlyValidAuction(_nftAddress, _tokenId, msg.sender) {
         Auction storage auction = auctions[_nftAddress][_tokenId][msg.sender];
         require(
             auction.startTime < _endTimestamp,
@@ -457,7 +466,7 @@ contract SwargNFTAuction is
         address _nftAddress,
         uint256 _tokenId,
         uint256 _startTime
-    ) public onlyValidAuction(_nftAddress, _tokenId,msg.sender) {
+    ) public onlyValidAuction(_nftAddress, _tokenId, msg.sender) {
         Auction storage auction = auctions[_nftAddress][_tokenId][msg.sender];
 
         require(
@@ -480,7 +489,7 @@ contract SwargNFTAuction is
         address _nftAddress,
         uint256 _tokenId,
         uint256 _reservePrice
-    ) public onlyValidAuction(_nftAddress, _tokenId,msg.sender) {
+    ) public onlyValidAuction(_nftAddress, _tokenId, msg.sender) {
         Auction storage auction = auctions[_nftAddress][_tokenId][msg.sender];
         auction.reservePrice = _reservePrice;
         emit UpdateAuctionReservePrice(_nftAddress, _tokenId, _reservePrice);
